@@ -41,37 +41,47 @@ class CounterScreen extends StatefulWidget {
 class _CounterScreenState extends State<CounterScreen> {
   int _counter = 0;
   List<Map<String, dynamic>> _history = [];
-  static const String appVersion = "v1.0.0";
+  SharedPreferences? _prefs;
+  static const String appVersion = "v1.0.1";
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _initPrefs();
   }
 
-  Future<void> _loadData() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _counter = prefs.getInt('current_counter') ?? 0;
-      final String? historyString = prefs.getString('tap_history');
-      if (historyString != null) {
-        _history = List<Map<String, dynamic>>.from(json.decode(historyString));
+  Future<void> _initPrefs() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+      final savedCount = _prefs?.getInt('current_counter') ?? 0;
+      final historyString = _prefs?.getString('tap_history');
+      List<Map<String, dynamic>> loadedHistory = [];
+      if (historyString != null && historyString.isNotEmpty) {
+        loadedHistory = List<Map<String, dynamic>>.from(json.decode(historyString));
       }
-    });
+      if (mounted) {
+        setState(() {
+          _counter = savedCount;
+          _history = loadedHistory;
+        });
+      }
+    } catch (_) {
+      // Continues working in memory even if storage is unavailable
+    }
   }
 
-  Future<void> _incrementCounter() async {
-    HapticFeedback.lightImpact();
-    final prefs = await SharedPreferences.getInstance();
+  void _incrementCounter() {
+    // 1. Update UI immediately so taps always work
     setState(() {
       _counter++;
     });
-    await prefs.setInt('current_counter', _counter);
+    // 2. Trigger vibration and save in background
+    HapticFeedback.lightImpact();
+    _prefs?.setInt('current_counter', _counter);
   }
 
-  Future<void> _resetCounter() async {
+  void _resetCounter() {
     if (_counter == 0) return;
-    HapticFeedback.mediumImpact();
 
     final now = DateTime.now();
     final formattedDate =
@@ -82,22 +92,21 @@ class _CounterScreenState extends State<CounterScreen> {
       'timestamp': formattedDate,
     };
 
-    final prefs = await SharedPreferences.getInstance();
     setState(() {
       _history.insert(0, session);
       _counter = 0;
     });
 
-    await prefs.setInt('current_counter', 0);
-    await prefs.setString('tap_history', json.encode(_history));
+    HapticFeedback.mediumImpact();
+    _prefs?.setInt('current_counter', 0);
+    _prefs?.setString('tap_history', json.encode(_history));
   }
 
-  Future<void> _clearHistory() async {
-    final prefs = await SharedPreferences.getInstance();
+  void _clearHistory() {
     setState(() {
       _history.clear();
     });
-    await prefs.remove('tap_history');
+    _prefs?.remove('tap_history');
   }
 
   String _twoDigits(int n) => n.toString().padLeft(2, '0');
@@ -133,47 +142,63 @@ class _CounterScreenState extends State<CounterScreen> {
       ),
       body: Column(
         children: [
-          // Main Tap Area
+          // Main Tap Area + Reset Button
           Expanded(
             flex: 6,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _incrementCounter,
-              child: Container(
-                width: double.infinity,
-                color: Colors.black,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      '$_counter',
-                      style: const TextStyle(
-                        fontSize: 96,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+            child: Stack(
+              children: [
+                // Full box tap detector
+                Positioned.fill(
+                  child: Material(
+                    color: Colors.black,
+                    child: InkWell(
+                      onTap: _incrementCounter,
+                      splashColor: Colors.white10,
+                      highlightColor: Colors.white10,
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '$_counter',
+                              style: const TextStyle(
+                                fontSize: 96,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'TAP ANYWHERE',
+                              style: TextStyle(
+                                fontSize: 11,
+                                letterSpacing: 3,
+                                color: Colors.white24,
+                              ),
+                            ),
+                            const SizedBox(height: 48),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'TAP ANYWHERE',
-                      style: TextStyle(
-                        fontSize: 11,
-                        letterSpacing: 3,
-                        color: Colors.white24,
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-                    // Small Reset Button
-                    SizedBox(
-                      height: 32,
+                  ),
+                ),
+                // Small Reset Button placed cleanly at bottom of tap zone
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 24.0),
+                    child: SizedBox(
+                      height: 34,
                       child: OutlinedButton(
                         onPressed: _resetCounter,
                         style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.black,
                           foregroundColor: Colors.white70,
                           side: const BorderSide(color: Colors.white24, width: 1),
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(18),
                           ),
                         ),
                         child: const Text(
@@ -182,9 +207,9 @@ class _CounterScreenState extends State<CounterScreen> {
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
           const Divider(color: Colors.white12, height: 1),
@@ -212,9 +237,12 @@ class _CounterScreenState extends State<CounterScreen> {
                       if (_history.isNotEmpty)
                         GestureDetector(
                           onTap: _clearHistory,
-                          child: const Text(
-                            'Clear All',
-                            style: TextStyle(color: Colors.redAccent, fontSize: 11),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4.0),
+                            child: Text(
+                              'Clear All',
+                              style: TextStyle(color: Colors.redAccent, fontSize: 11),
+                            ),
                           ),
                         ),
                     ],
@@ -247,7 +275,7 @@ class _CounterScreenState extends State<CounterScreen> {
                                     ),
                                   ),
                                   Text(
-                                    item['timestamp'],
+                                    item['timestamp'] ?? '',
                                     style: const TextStyle(
                                       color: Colors.white38,
                                       fontSize: 12,
